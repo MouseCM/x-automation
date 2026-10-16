@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deviantly X Studio</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">D</span><div><b>Deviantly X Studio</b><small>crawl → draft → review → publish</small></div></div>
+    <div class="chips" id="chips"></div>
+    <button class="btn primary" id="crawlBtn">Run crawler</button>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="posts" class="active">Crawled posts <span class="count" id="nPosts"></span></button>
+    <button data-tab="review">Review queue <span class="count hot" id="nReview"></span></button>
+    <button data-tab="published">Published <span class="count" id="nPublished"></span></button>
+    <button data-tab="account">X account</button>
+    <button data-tab="brand">Brand brief</button>
+  </nav>
+
+  <main>
+    <!-- Crawled posts -->
+    <section id="tab-posts" class="tab active">
+      <div class="split">
+        <aside class="list-pane">
+          <div class="filters">
+            <input type="search" id="fSearch" placeholder="Search text, summary, @user">
+            <div class="row">
+              <select id="fTopic"><option value="">All topics</option></select>
+              <select id="fSort">
+                <option value="score">Top score</option>
+                <option value="newest">Newest post</option>
+                <option value="discovered">Recently crawled</option>
+                <option value="likes">Most likes</option>
+              </select>
+            </div>
+            <div class="row">
+              <label class="range">Min score <input type="range" id="fScore" min="0" max="100" value="0"><b id="fScoreVal">0</b></label>
+              <label class="check"><input type="checkbox" id="fUndrafted"> No drafts yet</label>
+            </div>
+          </div>
+          <div id="postList" class="post-list"></div>
+        </aside>
+        <section class="detail-pane" id="postDetail">
+          <div class="empty">Select a crawled post to preview it and draft a post, quote, reply or repost.</div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Review queue -->
+    <section id="tab-review" class="tab">
+      <div class="toolbar">
+        <div>
+          <h2>Review queue</h2>
+          <p class="muted">Edit, regenerate or reject. <b>Approve &amp; publish</b> sends it to X right away.</p>
+        </div>
+        <form class="inline-form" id="autoForm">
+          <label>Draft top <input type="number" id="aCount" value="5" min="1" max="30"></label>
+          <label>as <select id="aKind"><option value="quote">quote posts</option><option value="post">posts</option><option value="reply">replies</option></select></label>
+          <label>score ≥ <input type="number" id="aMin" value="55" min="0" max="100"></label>
+          <button class="btn" type="submit">Auto-draft with Gemini</button>
+        </form>
+      </div>
+      <div id="autoStatus"></div>
+      <div id="reviewList" class="draft-grid"></div>
+    </section>
+
+    <!-- Published -->
+    <section id="tab-published" class="tab">
+      <div class="toolbar"><div><h2>Published</h2><p class="muted">Everything the Studio has posted, newest first. Rejected drafts are listed below.</p></div></div>
+      <div id="publishedList" class="draft-grid"></div>
+      <h3 class="subhead">Rejected</h3>
+      <div id="rejectedList" class="draft-grid"></div>
+    </section>
+
+    <!-- Account -->
+    <section id="tab-account" class="tab narrow">
+      <h2>X account</h2>
+      <p class="muted">Credentials are saved to <code>X-Crawler/.env</code> on this computer (git-ignored, owner-only). Secrets are never shown again; leave a secret blank to keep the saved one.</p>
+      <div class="modes" id="modes">
+        <label class="mode"><input type="radio" name="mode" value="api"><div><b>API tokens</b><span>Official X API (OAuth 1.0a user tokens). Most reliable for posts. Self-serve plans block replies and quotes to accounts that didn't mention you.</span></div></label>
+        <label class="mode"><input type="radio" name="mode" value="cookies"><div><b>Session cookies</b><span><code>auth_token</code> + <code>ct0</code> from your logged-in browser. Posts, quotes, replies and reposts.</span></div></label>
+        <label class="mode"><input type="radio" name="mode" value="password"><div><b>Username &amp; password</b><span>Logs in once, then reuses the saved session. Posts, quotes, replies and reposts.</span></div></label>
+      </div>
+      <form id="accountForm" class="card form"></form>
+      <div class="callout warn" id="twikitWarn" hidden>Cookie and password modes use the unofficial <code>twikit</code> library, which drives X's web app. X's rules don't allow that kind of automation and can lock the account; keep the volume low and human-paced.</div>
+      <div id="accountResult"></div>
+    </section>
+
+    <!-- Brand -->
+    <section id="tab-brand" class="tab narrow">
+      <h2>Brand brief</h2>
+      <p class="muted">Gemini reads this before every draft. It's the only source of facts about Deviantly it's allowed to use. Saved to <code>workflow/brand.md</code>.</p>
+      <textarea id="brandText" class="brand-text" spellcheck="true"></textarea>
+      <div class="actions"><button class="btn primary" id="brandSave">Save brief</button><span id="brandMsg" class="muted"></span></div>
+    </section>
+  </main>
+
+  <!-- Crawler dialog -->
+  <dialog id="crawlDialog">
+    <form method="dialog" id="crawlForm" class="form">
+      <h2>Run X crawler</h2>
+      <p class="muted">Runs <code>search_crawler.py</code> and appends new posts to <code>post.csv</code>.</p>
+      <div class="grid2">
+        <label>Max new posts <input type="number" id="cLimit" value="50" min="0"><small>0 = no limit</small></label>
+        <label>Posts newer than (hours) <input type="number" id="cSince" value="24" min="1" step="1"></label>
+      </div>
+      <fieldset><legend>Topics <small>(none checked = all)</small></legend><div id="cTopics" class="checks"></div></fieldset>
+      <label>Engines <input type="text" id="cEngines" placeholder="ddgs,duckduckgo,yahoo (default)"></label>
+      <fieldset>
+        <legend><label class="check"><input type="checkbox" id="cAuto" checked> Auto-draft the best new posts with Gemini</label></legend>
+        <div class="grid3">
+          <label>How many <input type="number" id="cACount" value="5" min="1" max="30"></label>
+          <label>As <select id="cAKind"><option value="quote">quote posts</option><option value="post">posts</option><option value="reply">replies</option></select></label>
+          <label>Min score <input type="number" id="cAMin" value="55" min="0" max="100"></label>
+        </div>
+      </fieldset>
+      <div class="actions">
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" id="crawlStart" value="run">Start crawl</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Publish confirmation -->
+  <dialog id="confirmDialog">
+    <form method="dialog" class="form">
+      <h2 id="confirmTitle">Publish to X?</h2>
+      <div id="confirmBody"></div>
+      <div class="actions">
+        <button class="btn" value="cancel">Cancel</button>
+        <button class="btn primary" value="ok" id="confirmOk">Publish now</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Crawler log drawer -->
+  <section class="drawer" id="drawer" hidden>
+    <header><b id="drawerTitle">Crawler</b><span id="drawerMsg" class="muted"></span><button class="icon" id="drawerClose" title="Hide log">✕</button></header>
+    <pre id="drawerLog"></pre>
+  </section>
+
+  <div id="toasts"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

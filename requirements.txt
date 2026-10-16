@@ -1,0 +1,8 @@
+ddgs
+google-genai
+httpx
+# Studio (studio.py): review UI and publishing to X
+fastapi
+uvicorn
+tweepy
+twikit
