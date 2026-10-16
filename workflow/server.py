@@ -8,13 +8,16 @@ Serves the review UI from workflow/static and a JSON API under /api:
   brand     the brand brief Gemini writes from
 """
 
+import csv
 import os
+import re
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,8 +27,10 @@ from pydantic import BaseModel
 from env import load_env_file
 from topics import load_topics
 
+from . import autopilot as ap
 from . import publisher, store
-from .drafter import Drafter, load_brand, max_chars, save_brand, x_length
+from .autopilot import Autopilot
+from .drafter import Drafter, load_brand, load_persona, max_chars, save_brand, save_persona, x_length
 from .posts import POSTS_CSV, ROOT, load_posts, posts_by_id
 
 load_env_file()
@@ -124,7 +129,7 @@ def _autodraft(opts: AutoDraftOpts) -> None:
     ]
     picks = sorted(pool, key=lambda p: -p["score"])[: max(0, opts.count)]
     AUTODRAFT.total = len(picks)
-    AUTODRAFT.log.append(f"drafting {opts.kind} for {len(picks)} posts (min score {opts.min_score})")
+    AUTODRAFT.log.append(f"Writing {opts.kind} drafts for {len(picks)} posts with a score of {opts.min_score} or more")
     drafter, errors = _drafter(), 0
 
     def one(p):
@@ -132,16 +137,16 @@ def _autodraft(opts: AutoDraftOpts) -> None:
         try:
             out = drafter.draft(p, opts.kind)
             store.create(p, opts.kind, out.text, out.angle, out.fit, model=drafter.model)
-            AUTODRAFT.log.append(f"✓ @{p['username']}: fit {out.fit}/10")
+            AUTODRAFT.log.append(f"Drafted for @{p['username']} (fit {out.fit}/10)")
         except Exception as e:
             errors += 1
-            AUTODRAFT.log.append(f"✗ @{p['username']}: {e}")
+            AUTODRAFT.log.append(f"Couldn't draft for @{p['username']}: {e}")
         AUTODRAFT.done += 1
 
     with ThreadPoolExecutor(3) as ex:
         list(ex.map(one, picks))
     made = len(picks) - errors
-    AUTODRAFT.finish(errors == 0, f"{made} drafts ready for review" + (f", {errors} failed" if errors else ""))
+    AUTODRAFT.finish(errors == 0, f"{made} new drafts to review" + (f", {errors} couldn't be written" if errors else ""))
 
 
 def start_autodraft(opts: AutoDraftOpts) -> bool:
@@ -160,30 +165,84 @@ class CrawlOpts(BaseModel):
     autodraft: AutoDraftOpts | None = None
 
 
-def _crawl(opts: CrawlOpts) -> None:
+def run_crawler(limit: int, since: float, topics: list[str], log, engines: str = "", summary: str = "auto") -> list[str]:
+    """Run search_crawler.py, streaming its output to log(line). Returns the ids of new posts; raises on failure."""
     before = {p["id"] for p in load_posts()}
-    cmd = [sys.executable, "-u", "search_crawler.py", "--limit", str(opts.limit), "--since", str(opts.since),
-           "--summary", opts.summary, "--out", POSTS_CSV]
-    if opts.topics:
-        cmd += ["--topics", ",".join(opts.topics)]
-    if opts.engines.strip():
-        cmd += ["--engines", opts.engines.strip()]
-    CRAWL.log.append("$ " + " ".join(cmd[1:]))
+    cmd = [sys.executable, "-u", "search_crawler.py", "--limit", str(limit), "--since", str(since),
+           "--summary", summary, "--out", POSTS_CSV]
+    if topics:
+        cmd += ["--topics", ",".join(topics)]
+    if engines.strip():
+        cmd += ["--engines", engines.strip()]
+    log("$ " + " ".join(cmd[1:]))
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            bufsize=1, env={**os.environ, "PYTHONUNBUFFERED": "1"})
+    for line in proc.stdout:
+        log(line.rstrip())
+    if code := proc.wait():
+        raise RuntimeError(f"The crawler stopped with an error (exit code {code})")
+    return [p["id"] for p in load_posts() if p["id"] not in before]
+
+
+def _crawl(opts: CrawlOpts) -> None:
     try:
-        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                bufsize=1, env={**os.environ, "PYTHONUNBUFFERED": "1"})
-        for line in proc.stdout:
-            CRAWL.log.append(line.rstrip())
-        code = proc.wait()
+        new_ids = run_crawler(opts.limit, opts.since, opts.topics, CRAWL.log.append, opts.engines, opts.summary)
     except Exception as e:
-        CRAWL.finish(False, f"could not start crawler: {e}")
+        CRAWL.finish(False, str(e))
         return
-    new_ids = [p["id"] for p in load_posts() if p["id"] not in before]
     CRAWL.done = len(new_ids)
-    CRAWL.finish(code == 0, f"{len(new_ids)} new posts" if code == 0 else f"crawler exited with code {code}")
-    if code == 0 and opts.autodraft and new_ids:
+    CRAWL.finish(True, f"Found {len(new_ids)} new posts")
+    if opts.autodraft and new_ids:
         opts.autodraft.only_ids = new_ids
         start_autodraft(opts.autodraft)
+
+
+# Scheduled drafts publish only while the Studio runs. A draft that comes due while it's closed is still
+# published on the next start if it's under MISSED_GRACE late; older ones are marked failed so you decide.
+MISSED_GRACE = timedelta(hours=6)
+SCHEDULER_TICK = 20  # seconds
+
+
+def _scheduler() -> None:
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            for d in store.due(now.isoformat(timespec="seconds")):
+                late = now - datetime.fromisoformat(d["scheduled_at"])
+                if late > MISSED_GRACE:
+                    store.update(d["id"], status="failed", error=(
+                        f"Missed its scheduled time by {int(late.total_seconds() // 3600)} hours because the Studio "
+                        "wasn't running. Publish it now or pick a new time."))
+                    continue
+                claimed = store.claim_for_publishing(d["id"], from_statuses=("scheduled",))
+                if claimed:
+                    _publish_claimed(claimed)
+        except Exception as e:  # never let one bad row stop the scheduler
+            print(f"scheduler: {type(e).__name__}: {e}", file=sys.stderr)
+        time.sleep(SCHEDULER_TICK)
+
+
+threading.Thread(target=_scheduler, daemon=True, name="scheduler").start()
+
+
+AUTOPILOT = Job("autopilot")
+
+
+def _autopilot_crawl(limit: int, since: float, topics: list[str], log) -> list[str]:
+    """The autopilot's crawl also counts as the crawler running, so a manual crawl can't overlap it."""
+    if not CRAWL.start():
+        raise RuntimeError("A crawl is already running; the autopilot will try again next time")
+    try:
+        new_ids = run_crawler(limit, since, topics, lambda line: (CRAWL.log.append(line), log(line)))
+    except Exception as e:
+        CRAWL.finish(False, str(e))
+        raise
+    CRAWL.finish(True, f"Found {len(new_ids)} new posts")
+    return new_ids
+
+
+autopilot = Autopilot(AUTOPILOT, crawl=_autopilot_crawl, publish=lambda d: _publish_claimed(d))  # defined below
+autopilot.start()
 
 
 # --------------------------------------------------------------------------- routes: status, crawl, posts
@@ -191,23 +250,144 @@ def _crawl(opts: CrawlOpts) -> None:
 @app.get("/api/status")
 def status():
     return {
-        "crawl": CRAWL.state(), "autodraft": AUTODRAFT.state(), "counts": store.counts(),
+        "crawl": CRAWL.state(), "autodraft": AUTODRAFT.state(), "autopilot": _autopilot_state(), "counts": store.counts(),
         "gemini": _drafter().ready, "x_mode": publisher.current_mode(), "max_chars": max_chars(),
+        "next_scheduled": next((d["scheduled_at"] for d in sorted(store.list_drafts("scheduled"),
+                                                                    key=lambda d: d["scheduled_at"])), None),
     }
+
+
+def _autopilot_state() -> dict:
+    s = ap.load_settings()
+    return {**AUTOPILOT.state(), "enabled": s.enabled, "next_run_at": s.next_run_at if s.enabled else None,
+            "in_active_hours": ap.in_active_hours(s), "posted_today": ap.posted_today(), "daily_cap": s.daily_cap}
+
+
+@app.get("/api/autopilot")
+def get_autopilot():
+    return {"settings": ap.load_settings().model_dump(), "state": _autopilot_state(), "runs": _runs()}
+
+
+def _runs() -> list[dict]:
+    runs = store.list_runs()
+    for r in runs:
+        d = store.get(r["draft_id"]) if r["draft_id"] else None
+        r["draft"] = _with_meta(d) if d else None
+    return runs
+
+
+@app.put("/api/autopilot")
+def put_autopilot(body: ap.Settings):
+    old = ap.load_settings()
+    if body.enabled and not old.enabled:
+        body.next_run_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(timespec="seconds")
+    elif body.enabled:
+        body.next_run_at = old.next_run_at
+    else:
+        body.next_run_at = None
+    return {"settings": ap.save_settings(body).model_dump(), "state": _autopilot_state()}
+
+
+@app.post("/api/autopilot/run")
+def run_autopilot():
+    if not _drafter().ready:
+        raise HTTPException(400, "Add GEMINI_API_KEY to X-Crawler/.env first")
+    if CRAWL.running:
+        raise HTTPException(409, "A crawl is already running. Try again when it finishes")
+    if not autopilot.run_now("manual"):
+        raise HTTPException(409, "The autopilot is already running")
+    return _autopilot_state()
+
+
+TOPICS_CSV = os.path.join(ROOT, "topics.csv")
+_topics_lock = threading.Lock()
 
 
 @app.get("/api/topics")
 def topics():
     try:
-        return [t.name for t in load_topics(os.path.join(ROOT, "topics.csv"))]
+        return [t.name for t in load_topics(TOPICS_CSV)]
     except Exception:
         return []
+
+
+@app.get("/api/topics/full")
+def topics_full():
+    try:
+        return [{"name": t.name, "keywords": t.keywords, "exclude": t.exclude, "require": t.require}
+                for t in load_topics(TOPICS_CSV)]
+    except Exception:
+        return []
+
+
+def _write_topics(rows: list[dict]) -> None:
+    """Rewrite topics.csv, keeping any # comment lines at the top."""
+    comments = []
+    if os.path.exists(TOPICS_CSV):
+        with open(TOPICS_CSV, encoding="utf-8") as f:
+            comments = [line for line in f if line.lstrip().startswith("#")]
+    tmp = TOPICS_CSV + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        f.writelines(comments)
+        w = csv.writer(f)
+        w.writerow(["topic", "keywords", "exclude", "require"])
+        for r in rows:
+            w.writerow([r["name"], "|".join(r["keywords"]), "|".join(r["exclude"]), "|".join(r["require"])])
+    os.replace(tmp, TOPICS_CSV)
+
+
+def _terms(items: list[str]) -> list[str]:
+    out = []
+    for item in items:
+        for part in re.split(r"[|,\n]", item):  # accept commas or | between terms
+            part = " ".join(part.split()).strip("\"'")
+            if part and part.lower() not in (o.lower() for o in out):
+                out.append(part)
+    return out
+
+
+class TopicIn(BaseModel):
+    name: str
+    keywords: list[str]
+    exclude: list[str] = []
+    require: list[str] = []
+
+
+@app.post("/api/topics")
+def add_topic(body: TopicIn):
+    name = re.sub(r"[^a-z0-9]+", "-", body.name.strip().lower()).strip("-")
+    if not name:
+        raise HTTPException(400, "Give the topic a name")
+    keywords = _terms(body.keywords)
+    if not keywords:
+        raise HTTPException(400, "Add at least one keyword to search for")
+    if len(keywords) > 25:
+        raise HTTPException(400, "Keep it to 25 keywords or fewer; each one is a separate search")
+    with _topics_lock:
+        rows = topics_full()
+        if any(r["name"] == name for r in rows):
+            raise HTTPException(409, f"There's already a topic called {name}")
+        rows.append({"name": name, "keywords": keywords, "exclude": _terms(body.exclude), "require": _terms(body.require)})
+        _write_topics(rows)
+    return topics_full()
+
+
+@app.delete("/api/topics/{name}")
+def delete_topic(name: str):
+    with _topics_lock:
+        rows = topics_full()
+        if not any(r["name"] == name for r in rows):
+            raise HTTPException(404, "That topic doesn't exist")
+        if len(rows) == 1:
+            raise HTTPException(400, "Keep at least one topic so the crawler has something to search for")
+        _write_topics([r for r in rows if r["name"] != name])
+    return topics_full()
 
 
 @app.post("/api/crawl")
 def crawl(opts: CrawlOpts):
     if not CRAWL.start():
-        raise HTTPException(409, "the crawler is already running")
+        raise HTTPException(409, "The crawler is already running")
     threading.Thread(target=_crawl, args=(opts,), daemon=True).start()
     return CRAWL.state()
 
@@ -215,11 +395,11 @@ def crawl(opts: CrawlOpts):
 @app.post("/api/autodraft")
 def autodraft(opts: AutoDraftOpts):
     if opts.kind not in ("post", "quote", "reply"):
-        raise HTTPException(400, "kind must be post, quote or reply")
+        raise HTTPException(400, "Auto-draft can write posts, quote posts or replies")
     if not _drafter().ready:
-        raise HTTPException(400, "GEMINI_API_KEY is not set")
+        raise HTTPException(400, "Add GEMINI_API_KEY to X-Crawler/.env to write drafts")
     if not start_autodraft(opts):
-        raise HTTPException(409, "auto-draft is already running")
+        raise HTTPException(409, "Gemini is already writing drafts")
     return AUTODRAFT.state()
 
 
@@ -251,7 +431,7 @@ class EditDraft(BaseModel):
 def _get_draft(draft_id: int) -> dict:
     d = store.get(draft_id)
     if not d:
-        raise HTTPException(404, "draft not found")
+        raise HTTPException(404, "That draft no longer exists")
     return d
 
 
@@ -263,10 +443,10 @@ def drafts(status: str | None = None, post_id: str | None = None):
 @app.post("/api/drafts")
 def new_draft(body: NewDraft):
     if body.kind not in store.KINDS:
-        raise HTTPException(400, f"kind must be one of {', '.join(store.KINDS)}")
+        raise HTTPException(400, "Pick post, quote, reply or repost")
     post = posts_by_id().get(body.post_id)
     if not post:
-        raise HTTPException(404, "post not found in post.csv")
+        raise HTTPException(404, "That post is no longer in post.csv")
     drafter = _drafter()
     try:
         out = drafter.draft(post, body.kind, body.instruction)
@@ -280,7 +460,7 @@ def new_draft(body: NewDraft):
 def regenerate(draft_id: int, body: Regenerate):
     d = _get_draft(draft_id)
     if d["status"] not in ("draft", "failed"):
-        raise HTTPException(409, f"can't regenerate a {d['status']} draft")
+        raise HTTPException(409, f"A {d['status']} draft can't be rewritten")
     drafter = _drafter()
     try:
         out = drafter.draft(d["source"], d["kind"], body.instruction, previous=d["text"])
@@ -293,9 +473,24 @@ def regenerate(draft_id: int, body: Regenerate):
 @app.patch("/api/drafts/{draft_id}")
 def edit(draft_id: int, body: EditDraft):
     d = _get_draft(draft_id)
-    if d["status"] not in ("draft", "failed"):
-        raise HTTPException(409, f"can't edit a {d['status']} draft")
+    if d["status"] not in ("draft", "failed", "scheduled"):
+        raise HTTPException(409, f"A {d['status']} draft can't be edited")
+    if d["status"] == "scheduled" and d["kind"] != "repost" and x_length(body.text) > max_chars():
+        raise HTTPException(400, f"The draft is {x_length(body.text)} characters; the limit is {max_chars()}")
     return _with_meta(store.update(draft_id, text=body.text))
+
+
+def _publish_claimed(d: dict) -> dict:
+    """Publish a draft already moved to 'publishing'; record the result either way."""
+    if d["kind"] != "repost" and x_length(d["text"]) > max_chars():
+        return store.update(d["id"], status="failed",
+                            error=f"Too long: {x_length(d['text'])} of {max_chars()} characters")
+    src = d["source"]
+    try:
+        res = publisher.publish(d["kind"], d["text"], src["id"], src["url"])
+    except publisher.PublishError as e:
+        return store.update(d["id"], status="failed", error=str(e))
+    return store.update(d["id"], status="posted", published_id=res["id"], published_url=res["url"])
 
 
 @app.post("/api/drafts/{draft_id}/approve")
@@ -306,31 +501,64 @@ def approve(draft_id: int, body: EditDraft | None = None):
         store.update(draft_id, text=body.text)
     d = store.claim_for_publishing(draft_id)
     if not d:
-        raise HTTPException(409, "this draft was already published or rejected")
-    if d["kind"] != "repost" and x_length(d["text"]) > max_chars():
-        store.update(draft_id, status="failed", error=f"Too long: {x_length(d['text'])}/{max_chars()} characters")
-        raise HTTPException(400, f"draft is {x_length(d['text'])} characters; the limit is {max_chars()}")
-    src = d["source"]
+        raise HTTPException(409, "This draft was already published, scheduled or rejected")
+    return _with_meta(_publish_claimed(d))
+
+
+class ScheduleIn(BaseModel):
+    at: str              # ISO time with timezone, e.g. 2026-10-17T09:30:00.000Z
+    text: str | None = None
+
+
+def _parse_time(at: str) -> datetime:
     try:
-        res = publisher.publish(d["kind"], d["text"], src["id"], src["url"])
-    except publisher.PublishError as e:
-        return _with_meta(store.update(draft_id, status="failed", error=str(e)))
-    return _with_meta(store.update(draft_id, status="posted", published_id=res["id"], published_url=res["url"]))
+        t = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, "Couldn't read that date and time")
+    if t.tzinfo is None:
+        raise HTTPException(400, "The time needs a timezone")
+    return t.astimezone(timezone.utc)
+
+
+@app.post("/api/drafts/{draft_id}/schedule")
+def schedule(draft_id: int, body: ScheduleIn):
+    """Schedule (or reschedule) a draft. The Studio has to be running at that time to publish it."""
+    d = _get_draft(draft_id)
+    if d["status"] not in ("draft", "failed", "scheduled"):
+        raise HTTPException(409, f"A {d['status']} draft can't be scheduled")
+    at = _parse_time(body.at)
+    if at < datetime.now(timezone.utc) + timedelta(minutes=1):
+        raise HTTPException(400, "Pick a time at least a minute from now")
+    text = d["text"] if body.text is None else body.text
+    if d["kind"] != "repost" and not text.strip():
+        raise HTTPException(400, "The draft is empty")
+    if d["kind"] != "repost" and x_length(text) > max_chars():
+        raise HTTPException(400, f"The draft is {x_length(text)} characters; the limit is {max_chars()}")
+    return _with_meta(store.update(draft_id, text=text, status="scheduled", error=None,
+                                   scheduled_at=at.isoformat(timespec="seconds")))
+
+
+@app.post("/api/drafts/{draft_id}/unschedule")
+def unschedule(draft_id: int):
+    d = _get_draft(draft_id)
+    if d["status"] != "scheduled":
+        raise HTTPException(409, "This draft isn't scheduled")
+    return _with_meta(store.update(draft_id, status="draft", scheduled_at=None))
 
 
 @app.post("/api/drafts/{draft_id}/reject")
 def reject(draft_id: int):
     d = _get_draft(draft_id)
-    if d["status"] not in ("draft", "failed"):
-        raise HTTPException(409, f"can't reject a {d['status']} draft")
-    return _with_meta(store.update(draft_id, status="rejected"))
+    if d["status"] not in ("draft", "failed", "scheduled"):
+        raise HTTPException(409, f"A {d['status']} draft can't be rejected")
+    return _with_meta(store.update(draft_id, status="rejected", scheduled_at=None))
 
 
 @app.post("/api/drafts/{draft_id}/restore")
 def restore(draft_id: int):
     d = _get_draft(draft_id)
     if d["status"] != "rejected":
-        raise HTTPException(409, "only rejected drafts can be restored")
+        raise HTTPException(409, "Only rejected drafts can be restored")
     return _with_meta(store.update(draft_id, status="draft"))
 
 
@@ -338,7 +566,7 @@ def restore(draft_id: int):
 def remove(draft_id: int):
     d = _get_draft(draft_id)
     if d["status"] in ("posted", "publishing"):
-        raise HTTPException(409, "published drafts are kept as history")
+        raise HTTPException(409, "Published drafts are kept as history")
     store.delete(draft_id)
     return {"ok": True}
 
@@ -383,7 +611,7 @@ def account():
 @app.post("/api/account")
 def save_account(body: AccountIn):
     if body.mode not in publisher.MODES:
-        raise HTTPException(400, "unknown mode")
+        raise HTTPException(400, "Unknown sign-in method")
     allowed = set(publisher.FIELDS[body.mode])
     # Blank secret fields mean "keep what's saved" (the UI never receives secrets back).
     values = {k: v.strip() for k, v in body.values.items() if k in allowed and (v.strip() or k not in publisher.SECRET)}
@@ -412,6 +640,17 @@ def disconnect():
 
 class BrandIn(BaseModel):
     text: str
+
+
+@app.get("/api/persona")
+def persona():
+    return {"text": load_persona()}
+
+
+@app.put("/api/persona")
+def put_persona(body: BrandIn):
+    save_persona(body.text)
+    return {"text": load_persona()}
 
 
 @app.get("/api/brand")

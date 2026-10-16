@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "every_hours": 3.0,
+  "crawl_limit": 10,
+  "since_hours": 24.0,
+  "topics": [],
+  "kinds": [
+    "post"
+  ],
+  "publish": "auto",
+  "min_fit": 6,
+  "daily_cap": 4,
+  "active_from": 8,
+  "active_to": 22,
+  "next_run_at": "2026-10-16T14:46:32+00:00"
+}

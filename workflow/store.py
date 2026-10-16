@@ -1,8 +1,8 @@
 """Drafts awaiting review, kept in SQLite (workflow/studio.db).
 
-Draft lifecycle:  draft -> (edit / regenerate)* -> publishing -> posted | failed
+Draft lifecycle:  draft -> (edit / regenerate)* -> [scheduled ->] publishing -> posted | failed
                         \\-> rejected
-A failed draft can be edited and approved again.
+A failed draft can be edited and approved again; a scheduled one can be unscheduled back to draft.
 """
 
 import json
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio.db")
 KINDS = ("post", "quote", "reply", "repost")
-STATUSES = ("draft", "publishing", "posted", "failed", "rejected")
+STATUSES = ("draft", "scheduled", "publishing", "posted", "failed", "rejected")
 
 _lock = threading.Lock()
 
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     published_id  TEXT,
     published_url TEXT,
     error         TEXT,
+    scheduled_at  TEXT,                   -- UTC ISO time to publish at (status 'scheduled')
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
@@ -53,6 +54,9 @@ def _conn() -> sqlite3.Connection:
 def init() -> None:
     with _lock, _conn() as c:
         c.executescript(SCHEMA)
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(drafts)")}
+        if "scheduled_at" not in cols:  # database from before scheduling existed
+            c.execute("ALTER TABLE drafts ADD COLUMN scheduled_at TEXT")
 
 
 def _row(r: sqlite3.Row | None) -> dict | None:
@@ -94,7 +98,8 @@ def list_drafts(status: str | None = None, post_id: str | None = None) -> list[d
 
 
 def update(draft_id: int, **fields) -> dict | None:
-    allowed = {"text", "angle", "fit", "instruction", "model", "status", "published_id", "published_url", "error"}
+    allowed = {"text", "angle", "fit", "instruction", "model", "status", "published_id", "published_url", "error",
+               "scheduled_at"}
     fields = {k: v for k, v in fields.items() if k in allowed}
     fields["updated_at"] = _now()
     sets = ", ".join(f"{k}=?" for k in fields)
@@ -103,16 +108,25 @@ def update(draft_id: int, **fields) -> dict | None:
         return _row(c.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone())
 
 
-def claim_for_publishing(draft_id: int) -> dict | None:
-    """Atomically move a draft/failed draft to 'publishing'. None if it's not publishable (e.g. double click)."""
+def claim_for_publishing(draft_id: int, from_statuses: tuple[str, ...] = ("draft", "failed")) -> dict | None:
+    """Atomically move a draft to 'publishing'. None if it's not in from_statuses (e.g. a double click)."""
     with _lock, _conn() as c:
         cur = c.execute(
-            "UPDATE drafts SET status='publishing', error=NULL, updated_at=? WHERE id=? AND status IN ('draft','failed')",
-            (_now(), draft_id),
+            f"UPDATE drafts SET status='publishing', error=NULL, updated_at=? WHERE id=? "
+            f"AND status IN ({','.join('?' * len(from_statuses))})",
+            (_now(), draft_id, *from_statuses),
         )
         if cur.rowcount == 0:
             return None
         return _row(c.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone())
+
+
+def due(now_iso: str) -> list[dict]:
+    """Scheduled drafts whose time has come, oldest first."""
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM drafts WHERE status='scheduled' AND scheduled_at <= ? ORDER BY scheduled_at",
+                         (now_iso,)).fetchall()
+        return [_row(r) for r in rows]
 
 
 def delete(draft_id: int) -> None:
@@ -136,3 +150,55 @@ def summary_by_post() -> dict[str, dict]:
 def counts() -> dict[str, int]:
     with _conn() as c:
         return {r["status"]: r["n"] for r in c.execute("SELECT status, COUNT(*) n FROM drafts GROUP BY status")}
+
+
+# --------------------------------------------------------------------------- autopilot run history
+
+RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS autopilot_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    trigger     TEXT NOT NULL DEFAULT 'schedule',  -- schedule | manual
+    outcome     TEXT NOT NULL DEFAULT 'running',   -- running | posted | queued | skipped | failed
+    message     TEXT NOT NULL DEFAULT '',
+    found       INTEGER NOT NULL DEFAULT 0,        -- new posts the crawl found
+    considered  INTEGER NOT NULL DEFAULT 0,        -- candidates Gemini chose from
+    post_id     TEXT,
+    draft_id    INTEGER,
+    reason      TEXT NOT NULL DEFAULT ''           -- why Gemini picked that post
+);
+"""
+
+
+def init_runs() -> None:
+    with _lock, _conn() as c:
+        c.executescript(RUNS_SCHEMA)
+        # A run cut short by a restart never finishes; close it so the history makes sense.
+        c.execute("UPDATE autopilot_runs SET outcome='failed', message='Stopped because the Studio closed', "
+                  "finished_at=started_at WHERE outcome='running'")
+
+
+def start_run(trigger: str) -> int:
+    with _lock, _conn() as c:
+        return c.execute("INSERT INTO autopilot_runs (started_at, trigger) VALUES (?, ?)", (_now(), trigger)).lastrowid
+
+
+def finish_run(run_id: int, outcome: str, message: str, **fields) -> None:
+    allowed = {"found", "considered", "post_id", "draft_id", "reason"}
+    fields = {k: v for k, v in fields.items() if k in allowed}
+    sets = "".join(f", {k}=?" for k in fields)
+    with _lock, _conn() as c:
+        c.execute(f"UPDATE autopilot_runs SET outcome=?, message=?, finished_at=?{sets} WHERE id=?",
+                  (outcome, message, _now(), *fields.values(), run_id))
+
+
+def list_runs(limit: int = 30) -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM autopilot_runs ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def autopilot_posts_since(since_iso: str) -> int:
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) FROM autopilot_runs WHERE outcome='posted' AND started_at >= ?",
+                         (since_iso,)).fetchone()[0]

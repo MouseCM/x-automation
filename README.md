@@ -174,11 +174,26 @@ python3 studio.py                 # opens http://127.0.0.1:8787
 |---|---|
 | **Crawled posts** | Every row of `post.csv`, with filters (topic, min score, search, "no drafts yet"). Select one to see it as an X post, plus the crawler's summary, score and reasons. Draft a **Post** (original post that shares the news and pitches Deviantly), **Quote post** (repost with your commentary), **Reply** (comment under it) or **Repost** (plain repost), with an optional instruction for Gemini. |
 | **Review queue** | Drafts shown as they'll look on X, with an X-style character counter (links count 23). Edit inline, **Regenerate** with an instruction ("shorter", "mention the free trial"), **Reject**, or **Approve & publish**, which posts right away after a confirmation. **Auto-draft** writes drafts for the top-scoring posts that don't have one yet. |
+| **Scheduled** | Drafts waiting for their time, soonest first. Change the time, edit the text, unschedule, or post now. |
 | **Published** | What the Studio posted, with links, plus rejected drafts (restore or delete). |
 | **X account** | Connect the account that publishes (see below) and test the connection. |
-| **Brand brief** | `workflow/brand.md`: everything Gemini may say about Deviantly. Edit it to change the pitch. |
+| **Brand voice** | Two columns. **Brand brief** (`workflow/brand.md`): the only facts Gemini may use about Deviantly. **Persona** (`workflow/persona.md`): who is writing and how they sound, used for every post, quote and reply. An empty persona means a neutral voice. |
 
-**Run crawler** (top right) runs `search_crawler.py` in the background with a live log, and can auto-draft
+**Autopilot** (its own tab): every few hours it finds new posts (10 by default), has Gemini choose the one that
+suits Deviantly best, writes a post, quote or reply about it, and posts it. Off until you switch it on. Guards:
+it only runs in the hours you set, posts at most `daily cap` times a day, and anything with a fit below your
+minimum (or everything, if you pick "let me approve it first") waits in To review instead. Every run is listed
+with what it found, what it chose and why, and what it posted. Settings: `workflow/autopilot.json`.
+
+**Models:** drafts and picks use `gemini-3.8-flash`, falling back to `gemini-3.7-flash` and then
+`gemini-3.1-flash-lite` when a model is overloaded. Pro models need billing on your Google AI account; to use
+one, set `GEMINI_DRAFT_MODEL=gemini-3.1-pro-preview,gemini-3.8-flash` in `.env`.
+
+**Scheduling:** any draft (post, quote, reply or repost) can be scheduled instead of posted right away.
+The Studio publishes scheduled drafts itself, so it has to be running. A draft that came due while it was
+closed goes out on the next start if it's under 6 hours late; older ones are marked as not posted so you decide.
+
+**Find new posts** (top right) runs `search_crawler.py` in the background with a live log, and can auto-draft
 the best new posts when it finishes. Nothing is ever published without your approval.
 
 Gemini also rates each draft's **fit** (0–10): how naturally the source post connects to Deviantly.
@@ -206,10 +221,12 @@ patches around it and sends requests unsigned, but X may reject those. If publis
 |---|---|
 | `studio.py` | Starts the app (local only, `127.0.0.1`) |
 | `workflow/server.py` | API, background crawl and auto-draft jobs |
-| `workflow/drafter.py` | Gemini prompts for post / quote / reply; set `GEMINI_DRAFT_MODEL` to change the model |
+| `workflow/drafter.py` | Gemini prompts for choosing a post and writing post / quote / reply; `GEMINI_DRAFT_MODEL` sets the model chain |
+| `workflow/autopilot.py` | The autopilot loop and its guards |
 | `workflow/publisher.py` | Publishing through the X API or twikit |
 | `workflow/store.py` | Drafts in SQLite (`workflow/studio.db`, git-ignored) |
 | `workflow/brand.md` | Brand brief Gemini writes from |
+| `workflow/persona.md` | Persona (voice) Gemini writes in |
 | `workflow/static/` | The UI (plain HTML/CSS/JS) |
 
 Optional `.env` settings: `X_MAX_CHARS` (default 280; raise it for X Premium long posts) and `GEMINI_DRAFT_MODEL`.

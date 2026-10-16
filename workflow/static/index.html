@@ -4,142 +4,268 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Deviantly X Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo">D</span><div><b>Deviantly X Studio</b><small>crawl → draft → review → publish</small></div></div>
-    <div class="chips" id="chips"></div>
-    <button class="btn primary" id="crawlBtn">Run crawler</button>
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="logo"><iconify-icon icon="solar:radar-2-linear"></iconify-icon></span>
+        <div><b>deviantly studio</b><small>Find posts worth joining, write about them, publish when you're ready</small></div>
+      </div>
+      <div class="chips" id="chips"></div>
+      <button class="btn primary" id="crawlBtn"><iconify-icon icon="solar:magnifer-bold-duotone"></iconify-icon><span>Find new posts</span></button>
+    </div>
+    <nav class="tabs">
+      <div class="tabs-inner" id="tabs">
+        <button data-tab="posts" class="active">Posts <span class="count" id="nPosts"></span></button>
+        <button data-tab="autopilot">Autopilot <span class="count" id="nAuto"></span></button>
+        <button data-tab="review">To review <span class="count hot" id="nReview"></span></button>
+        <button data-tab="scheduled">Scheduled <span class="count" id="nScheduled"></span></button>
+        <button data-tab="published">Published <span class="count" id="nPublished"></span></button>
+        <button data-tab="account">X account</button>
+        <button data-tab="brand">Brand voice</button>
+      </div>
+    </nav>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button data-tab="posts" class="active">Crawled posts <span class="count" id="nPosts"></span></button>
-    <button data-tab="review">Review queue <span class="count hot" id="nReview"></span></button>
-    <button data-tab="published">Published <span class="count" id="nPublished"></span></button>
-    <button data-tab="account">X account</button>
-    <button data-tab="brand">Brand brief</button>
-  </nav>
-
   <main>
-    <!-- Crawled posts -->
+    <!-- 01 Posts -->
     <section id="tab-posts" class="tab active">
       <div class="split">
-        <aside class="list-pane">
+        <aside class="card list-pane">
           <div class="filters">
-            <input type="search" id="fSearch" placeholder="Search text, summary, @user">
+            <div class="search"><iconify-icon icon="solar:magnifer-bold-duotone"></iconify-icon><input type="search" id="fSearch" placeholder="Search posts, summaries or @handles"></div>
             <div class="row">
               <select id="fTopic"><option value="">All topics</option></select>
               <select id="fSort">
-                <option value="score">Top score</option>
-                <option value="newest">Newest post</option>
-                <option value="discovered">Recently crawled</option>
-                <option value="likes">Most likes</option>
+                <option value="score">Highest score</option>
+                <option value="newest">Newest on X</option>
+                <option value="discovered">Most recently found</option>
+                <option value="likes">Most liked</option>
               </select>
+              <button class="btn small" type="button" data-open-topics><iconify-icon icon="solar:add-circle-bold-duotone"></iconify-icon>Topic</button>
             </div>
             <div class="row">
-              <label class="range">Min score <input type="range" id="fScore" min="0" max="100" value="0"><b id="fScoreVal">0</b></label>
-              <label class="check"><input type="checkbox" id="fUndrafted"> No drafts yet</label>
+              <label class="range">Score at least <input type="range" id="fScore" min="0" max="100" value="0"><b id="fScoreVal">0</b></label>
+              <label class="check"><input type="checkbox" id="fUndrafted"> Not drafted yet</label>
             </div>
           </div>
           <div id="postList" class="post-list"></div>
         </aside>
-        <section class="detail-pane" id="postDetail">
-          <div class="empty">Select a crawled post to preview it and draft a post, quote, reply or repost.</div>
-        </section>
+        <section class="detail-pane stagger" id="postDetail"></section>
       </div>
     </section>
 
-    <!-- Review queue -->
+    <!-- 02 Autopilot -->
+    <section id="tab-autopilot" class="tab">
+      <div class="auto-grid stagger">
+        <div class="card panel auto-main">
+          <div class="auto-head">
+            <div>
+              <h2>Autopilot</h2>
+              <p class="muted">Every few hours it finds new posts, picks the one that suits Deviantly best, writes about it and posts it. No clicks needed.</p>
+            </div>
+            <label class="switch" title="Turn the autopilot on or off"><input type="checkbox" id="apEnabled"><span></span></label>
+          </div>
+          <div id="apStatus" class="auto-status"></div>
+          <div class="actions start"><button class="btn primary" id="apRunNow"><iconify-icon icon="solar:play-bold-duotone"></iconify-icon>Run once now</button></div>
+          <p class="muted small" id="apRunNote" style="margin-top:10px"></p>
+        </div>
+
+        <form class="card panel form auto-settings" id="apForm">
+          <h3><span class="num">A</span>How it works</h3>
+          <div class="grid2">
+            <label>Run every <select id="apEvery">
+              <option value="1">hour</option><option value="2">2 hours</option><option value="3">3 hours</option>
+              <option value="4">4 hours</option><option value="6">6 hours</option><option value="12">12 hours</option><option value="24">day</option></select></label>
+            <label>Posts to find each run <input type="number" id="apLimit" min="1" max="100"></label>
+            <label>Only between <span class="hours"><select id="apFrom"></select><span class="muted">and</span><select id="apTo"></select></span><small>Your local time</small></label>
+            <label>Look at posts from the last <select id="apSince">
+              <option value="6">6 hours</option><option value="12">12 hours</option><option value="24">24 hours</option><option value="48">2 days</option></select></label>
+          </div>
+          <fieldset><legend>It may write</legend><div class="checks" id="apKinds">
+            <label class="check"><input type="checkbox" value="post"> New posts</label>
+            <label class="check"><input type="checkbox" value="quote"> Quote posts</label>
+            <label class="check"><input type="checkbox" value="reply"> Replies</label>
+          </div></fieldset>
+          <fieldset><legend>Topics <small>leave all unchecked for every topic</small> <button class="link" type="button" data-open-topics>Add a topic</button></legend><div class="checks" id="apTopics"></div></fieldset>
+          <h3><span class="num">B</span>When to post without asking</h3>
+          <div class="radios">
+            <label class="check"><input type="radio" name="apPublish" value="auto"> Post automatically</label>
+            <label class="check"><input type="radio" name="apPublish" value="review"> Write it, but let me approve it first</label>
+          </div>
+          <div class="grid2">
+            <label>Only if the fit is at least <select id="apFit"></select><small>Lower fits wait for you in To review</small></label>
+            <label>At most this many posts a day <input type="number" id="apCap" min="1" max="50"></label>
+          </div>
+          <div class="actions"><span class="muted small" id="apSaved"></span><button class="btn primary" type="submit"><iconify-icon icon="solar:diskette-bold-duotone"></iconify-icon>Save settings</button></div>
+        </form>
+      </div>
+      <div class="subhead section-head"><h3>Recent runs</h3></div>
+      <div id="apRuns" class="runs stagger"></div>
+    </section>
+
+    <!-- 03 To review -->
     <section id="tab-review" class="tab">
       <div class="toolbar">
         <div>
-          <h2>Review queue</h2>
-          <p class="muted">Edit, regenerate or reject. <b>Approve &amp; publish</b> sends it to X right away.</p>
+          <h2>To review</h2>
+          <p class="muted">Edit anything you like, ask Gemini for a rewrite, then post it now or schedule it.</p>
         </div>
         <form class="inline-form" id="autoForm">
-          <label>Draft top <input type="number" id="aCount" value="5" min="1" max="30"></label>
-          <label>as <select id="aKind"><option value="quote">quote posts</option><option value="post">posts</option><option value="reply">replies</option></select></label>
-          <label>score ≥ <input type="number" id="aMin" value="55" min="0" max="100"></label>
-          <button class="btn" type="submit">Auto-draft with Gemini</button>
+          <span class="muted">Write</span>
+          <select id="aKind"><option value="quote">quote posts</option><option value="post">new posts</option><option value="reply">replies</option></select>
+          <span class="muted">for the top</span>
+          <input type="number" id="aCount" value="5" min="1" max="30">
+          <span class="muted">posts scoring</span>
+          <input type="number" id="aMin" value="55" min="0" max="100">
+          <span class="muted">or more</span>
+          <button class="btn" type="submit"><iconify-icon icon="solar:magic-stick-3-bold-duotone"></iconify-icon>Write drafts</button>
         </form>
       </div>
       <div id="autoStatus"></div>
-      <div id="reviewList" class="draft-grid"></div>
+      <div id="reviewList" class="draft-grid stagger"></div>
     </section>
 
-    <!-- Published -->
+    <!-- 04 Scheduled -->
+    <section id="tab-scheduled" class="tab">
+      <div class="toolbar"><div>
+        <h2>Scheduled</h2>
+        <p class="muted">Posts and replies waiting for their time. Keep the Studio running, since it does the publishing. Anything that comes due while it's closed goes out when you reopen it, unless it's more than 6 hours late.</p>
+      </div></div>
+      <div id="scheduledList" class="draft-grid stagger"></div>
+    </section>
+
+    <!-- 05 Published -->
     <section id="tab-published" class="tab">
-      <div class="toolbar"><div><h2>Published</h2><p class="muted">Everything the Studio has posted, newest first. Rejected drafts are listed below.</p></div></div>
-      <div id="publishedList" class="draft-grid"></div>
-      <h3 class="subhead">Rejected</h3>
+      <div class="toolbar"><div><h2>Published</h2><p class="muted">Everything the Studio has posted, newest first.</p></div></div>
+      <div id="publishedList" class="draft-grid stagger"></div>
+      <div class="subhead section-head"><h3>Rejected</h3></div>
       <div id="rejectedList" class="draft-grid"></div>
     </section>
 
-    <!-- Account -->
+    <!-- 06 Account -->
     <section id="tab-account" class="tab narrow">
       <h2>X account</h2>
-      <p class="muted">Credentials are saved to <code>X-Crawler/.env</code> on this computer (git-ignored, owner-only). Secrets are never shown again; leave a secret blank to keep the saved one.</p>
+      <p class="muted">Your sign-in details are saved in <code>X-Crawler/.env</code> on this computer only. Saved secrets aren't shown again; leave a field blank to keep what's saved.</p>
       <div class="modes" id="modes">
-        <label class="mode"><input type="radio" name="mode" value="api"><div><b>API tokens</b><span>Official X API (OAuth 1.0a user tokens). Most reliable for posts. Self-serve plans block replies and quotes to accounts that didn't mention you.</span></div></label>
-        <label class="mode"><input type="radio" name="mode" value="cookies"><div><b>Session cookies</b><span><code>auth_token</code> + <code>ct0</code> from your logged-in browser. Posts, quotes, replies and reposts.</span></div></label>
-        <label class="mode"><input type="radio" name="mode" value="password"><div><b>Username &amp; password</b><span>Logs in once, then reuses the saved session. Posts, quotes, replies and reposts.</span></div></label>
+        <label class="mode"><input type="radio" name="mode" value="api"><div><b><iconify-icon icon="solar:key-bold-duotone"></iconify-icon>API keys</b><span>X's official API. The most dependable way to post. X only allows API replies and quotes when the other account mentioned you.</span></div></label>
+        <label class="mode"><input type="radio" name="mode" value="cookies"><div><b><iconify-icon icon="solar:global-bold-duotone"></iconify-icon>Browser cookies</b><span>Reuse the session from a browser where you're signed in. Works for posts, quotes, replies and reposts.</span></div></label>
+        <label class="mode"><input type="radio" name="mode" value="password"><div><b><iconify-icon icon="solar:lock-password-bold-duotone"></iconify-icon>Username and password</b><span>Signs in once and remembers the session. Works for posts, quotes, replies and reposts.</span></div></label>
       </div>
       <form id="accountForm" class="card form"></form>
-      <div class="callout warn" id="twikitWarn" hidden>Cookie and password modes use the unofficial <code>twikit</code> library, which drives X's web app. X's rules don't allow that kind of automation and can lock the account; keep the volume low and human-paced.</div>
+      <div class="callout warn" id="twikitWarn" hidden><iconify-icon icon="solar:danger-triangle-bold-duotone"></iconify-icon><span>Cookie and password sign-in go through X's website using the unofficial twikit library. X doesn't allow that kind of automation and may lock the account, so keep it to a handful of posts a day.</span></div>
       <div id="accountResult"></div>
     </section>
 
-    <!-- Brand -->
-    <section id="tab-brand" class="tab narrow">
-      <h2>Brand brief</h2>
-      <p class="muted">Gemini reads this before every draft. It's the only source of facts about Deviantly it's allowed to use. Saved to <code>workflow/brand.md</code>.</p>
-      <textarea id="brandText" class="brand-text" spellcheck="true"></textarea>
-      <div class="actions"><button class="btn primary" id="brandSave">Save brief</button><span id="brandMsg" class="muted"></span></div>
+    <!-- 07 Brand voice -->
+    <section id="tab-brand" class="tab">
+      <div class="toolbar"><div>
+        <h2>Brand voice</h2>
+        <p class="muted">Gemini reads both before writing anything. The brief says what's true about Deviantly; the persona says who's talking and how they sound.</p>
+      </div></div>
+      <div class="voice-cols stagger">
+        <div class="voice-col card">
+          <div class="panel">
+            <div class="head"><span class="num">A</span><iconify-icon icon="solar:notebook-bold-duotone"></iconify-icon><h2>Brand brief</h2></div>
+            <p class="muted">Facts, products and data Gemini may use. Its only source of facts about Deviantly. Saved to <code>workflow/brand.md</code>.</p>
+            <textarea id="brandText" class="brand-text" spellcheck="true"></textarea>
+            <div class="actions"><span id="brandMsg" class="muted small"></span><button class="btn primary" id="brandSave"><iconify-icon icon="solar:diskette-bold-duotone"></iconify-icon>Save brief</button></div>
+          </div>
+        </div>
+        <div class="voice-col card">
+          <div class="panel">
+            <div class="head"><span class="num">B</span><iconify-icon icon="solar:user-speak-bold-duotone"></iconify-icon><h2>Persona</h2></div>
+            <p class="muted">The voice for every post, quote and reply: who's writing, how they think, what they'd never say. Leave it empty for a neutral voice. Saved to <code>workflow/persona.md</code>.</p>
+            <textarea id="personaText" class="brand-text" spellcheck="true" placeholder="Describe who is writing and how they sound."></textarea>
+            <div class="actions"><span id="personaMsg" class="muted small"></span><button class="btn primary" id="personaSave"><iconify-icon icon="solar:diskette-bold-duotone"></iconify-icon>Save persona</button></div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 
-  <!-- Crawler dialog -->
+  <!-- Find new posts -->
   <dialog id="crawlDialog">
     <form method="dialog" id="crawlForm" class="form">
-      <h2>Run X crawler</h2>
-      <p class="muted">Runs <code>search_crawler.py</code> and appends new posts to <code>post.csv</code>.</p>
+      <h2>Find new posts</h2>
+      <p class="muted">Searches the web for recent X posts on your topics and adds them to <code>post.csv</code>. This usually takes a few minutes.</p>
       <div class="grid2">
-        <label>Max new posts <input type="number" id="cLimit" value="50" min="0"><small>0 = no limit</small></label>
-        <label>Posts newer than (hours) <input type="number" id="cSince" value="24" min="1" step="1"></label>
+        <label>At most this many posts <input type="number" id="cLimit" value="50" min="0"><small>0 means no limit</small></label>
+        <label>Posted in the last (hours) <input type="number" id="cSince" value="24" min="1" step="1"></label>
       </div>
-      <fieldset><legend>Topics <small>(none checked = all)</small></legend><div id="cTopics" class="checks"></div></fieldset>
-      <label>Engines <input type="text" id="cEngines" placeholder="ddgs,duckduckgo,yahoo (default)"></label>
+      <fieldset><legend>Topics <small>leave all unchecked to search every topic</small> <button class="link" type="button" data-open-topics>Add a topic</button></legend><div id="cTopics" class="checks"></div></fieldset>
+      <label>Search engines <input type="text" id="cEngines" placeholder="ddgs, duckduckgo, yahoo (the default)"></label>
       <fieldset>
-        <legend><label class="check"><input type="checkbox" id="cAuto" checked> Auto-draft the best new posts with Gemini</label></legend>
+        <legend><label class="check"><input type="checkbox" id="cAuto" checked> When it's done, have Gemini write drafts for the best new posts</label></legend>
         <div class="grid3">
           <label>How many <input type="number" id="cACount" value="5" min="1" max="30"></label>
-          <label>As <select id="cAKind"><option value="quote">quote posts</option><option value="post">posts</option><option value="reply">replies</option></select></label>
-          <label>Min score <input type="number" id="cAMin" value="55" min="0" max="100"></label>
+          <label>Write <select id="cAKind"><option value="quote">quote posts</option><option value="post">new posts</option><option value="reply">replies</option></select></label>
+          <label>Score at least <input type="number" id="cAMin" value="55" min="0" max="100"></label>
         </div>
       </fieldset>
       <div class="actions">
-        <button class="btn" value="cancel" formnovalidate>Cancel</button>
-        <button class="btn primary" id="crawlStart" value="run">Start crawl</button>
+        <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="run"><iconify-icon icon="solar:magnifer-bold-duotone"></iconify-icon>Start</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Topics -->
+  <dialog id="topicsDialog" class="wide">
+    <div class="form">
+      <div class="dialog-head"><h2>Topics</h2><button class="btn small ghost" type="button" id="topicsClose">Close</button></div>
+      <p class="muted">The crawler runs one search per keyword, so each topic is a group of related searches.</p>
+      <div id="topicList" class="topic-list"></div>
+      <form id="topicForm" class="topic-form">
+        <h3>Add a topic</h3>
+        <label>Name <input id="tName" placeholder="e.g. tiktok-shop" required></label>
+        <label>Search for <textarea id="tKeywords" rows="2" placeholder="TikTok Shop, live selling, viral product, Amazon FBA" required></textarea>
+          <small>Separate keywords with commas. Each one is a separate search, and a post has to mention at least one of them.</small></label>
+        <div class="grid2">
+          <label>Skip posts that mention <input id="tExclude" value="giveaway, airdrop"><small>Optional</small></label>
+          <label>Only keep posts that also mention <input id="tRequire" placeholder="e.g. seller, brand, creator"><small>Optional. Useful for broad keywords</small></label>
+        </div>
+        <div class="actions"><button class="btn primary" type="submit"><iconify-icon icon="solar:add-circle-bold-duotone"></iconify-icon>Add topic</button></div>
+      </form>
+    </div>
   </dialog>
 
   <!-- Publish confirmation -->
   <dialog id="confirmDialog">
     <form method="dialog" class="form">
-      <h2 id="confirmTitle">Publish to X?</h2>
+      <h2 id="confirmTitle">Post this now?</h2>
       <div id="confirmBody"></div>
       <div class="actions">
-        <button class="btn" value="cancel">Cancel</button>
-        <button class="btn primary" value="ok" id="confirmOk">Publish now</button>
+        <button class="btn ghost" value="cancel">Cancel</button>
+        <button class="btn primary" value="ok" id="confirmOk">Post now</button>
       </div>
     </form>
   </dialog>
 
-  <!-- Crawler log drawer -->
+  <!-- Schedule picker -->
+  <dialog id="scheduleDialog">
+    <form method="dialog" class="form" id="scheduleForm">
+      <h2 id="scheduleTitle">Schedule this post</h2>
+      <p class="muted" id="scheduleNote"></p>
+      <div class="quick" id="scheduleQuick"></div>
+      <label>Date and time <input type="datetime-local" id="scheduleAt" required></label>
+      <p class="muted small" id="scheduleTz"></p>
+      <div class="actions">
+        <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="ok"><iconify-icon icon="solar:calendar-mark-bold-duotone"></iconify-icon>Schedule</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Job log -->
   <section class="drawer" id="drawer" hidden>
-    <header><b id="drawerTitle">Crawler</b><span id="drawerMsg" class="muted"></span><button class="icon" id="drawerClose" title="Hide log">✕</button></header>
+    <header><b id="drawerTitle">Finding posts</b><span id="drawerMsg" class="muted"></span><button class="btn small ghost" id="drawerClose">Hide</button></header>
     <pre id="drawerLog"></pre>
   </section>
 
