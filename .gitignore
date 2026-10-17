@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+workflow/.x_session.json
+
+# Local data written by the Studio
+workflow/studio.db
+workflow/studio.db-*
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store

@@ -6,12 +6,12 @@ A failed draft can be edited and approved again; a scheduled one can be unschedu
 """
 
 import json
-import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "studio.db")
+from config import DB_PATH
+
 KINDS = ("post", "quote", "reply", "repost")
 STATUSES = ("draft", "scheduled", "publishing", "posted", "failed", "rejected")
 

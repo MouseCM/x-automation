@@ -30,8 +30,8 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from config import POSTS_CSV, TOPICS_CSV
 from engines import ENGINES, EngineError, available
-from env import load_env_file
 from summarize import Summarizer
 from topics import quote_term, select_topics
 
@@ -260,9 +260,8 @@ def discover(engine: str, terms: str, per_query: int, window: timedelta) -> list
 
 
 def main() -> None:
-    load_env_file()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--topics-file", default="topics.csv", help="CSV of topics (topic,keywords,exclude)")
+    p.add_argument("--topics-file", default=TOPICS_CSV, help="CSV of topics (topic,keywords,exclude)")
     p.add_argument("--topics", default="", help="comma-separated topic names (default: all in topics file)")
     p.add_argument("--limit", type=int, default=100, help="max new posts to save in total (0 = no limit)")
     p.add_argument("--since", type=float, default=24, help="only keep posts newer than this many hours")
@@ -272,7 +271,7 @@ def main() -> None:
     p.add_argument("--delay", type=float, default=2.0, help="seconds between queries (be polite)")
     p.add_argument("--summary", choices=["auto", "gemini", "simple", "off"], default="auto",
                    help="how to fill the summary column (auto: Gemini if GEMINI_API_KEY works, else simple)")
-    p.add_argument("--out", default="post.csv", help="output CSV (appended to; known IDs are skipped)")
+    p.add_argument("--out", default=POSTS_CSV, help="output CSV (appended to; known IDs are skipped)")
     args = p.parse_args()
 
     topics = select_topics(args.topics_file, args.topics)

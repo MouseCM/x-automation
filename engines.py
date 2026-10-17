@@ -19,10 +19,11 @@ API engines (official, need a key or URL in .env):
   searxng     your own SearXNG instance    SEARXNG_URL      free, self-hosted (aggregates 70+ engines)
 """
 
-import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
+
+from config import env
 
 HTTP = httpx.Client(timeout=20, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True)
 
@@ -84,7 +85,7 @@ def _post_json(url: str, body: dict, headers: dict) -> dict:
 
 
 def _key(name: str) -> str:
-    key = os.environ.get(name)
+    key = env(name)
     if not key:
         raise EngineError(f"{name} is not set")
     return key
@@ -174,9 +175,9 @@ def available(names: list[str] | None = None) -> tuple[list[str], dict[str, str]
     for n in names:
         if n not in ENGINES:
             raise SystemExit(f"unknown engine {n!r} (available: {', '.join(ENGINES)})")
-        env = API_ENGINES.get(n, (None, None))[1]
-        if env and not os.environ.get(env):
-            skipped[n] = f"set {env} in .env"
+        key_name = API_ENGINES.get(n, (None, None))[1]
+        if key_name and not env(key_name):
+            skipped[n] = f"set {key_name} in .env"
         elif n in SCRAPED and n not in _ddgs_enabled():
             skipped[n] = "disabled in the installed ddgs version (no working scraper)"
         else:

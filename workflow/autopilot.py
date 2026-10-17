@@ -21,11 +21,12 @@ from typing import Callable
 
 from pydantic import BaseModel, Field
 
+from config import AUTOPILOT_PATH as SETTINGS_PATH
+
 from . import publisher, store
 from .drafter import Drafter
 from .posts import load_posts
 
-SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autopilot.json")
 TICK = 30  # seconds between schedule checks
 
 
@@ -87,9 +88,9 @@ class Autopilot:
         self.job = job
         self._crawl = crawl
         self._publish = publish
-        store.init_runs()
 
     def start(self) -> None:
+        store.init_runs()
         threading.Thread(target=self._loop, daemon=True, name="autopilot").start()
 
     def run_now(self, trigger: str = "manual") -> bool:

@@ -4,8 +4,7 @@ import csv
 import html
 import os
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-POSTS_CSV = os.path.join(ROOT, "post.csv")
+from config import POSTS_CSV
 
 
 def _int(v) -> int:

@@ -170,6 +170,17 @@ python3 -m pip install -r requirements.txt
 python3 studio.py                 # opens http://127.0.0.1:8787
 ```
 
+**Use it from another device on the same network** (phone, a teammate's laptop):
+
+```bash
+python3 studio.py --lan
+```
+
+It prints an access code and a link like `http://192.168.1.20:8787/login?code=...`. Opening the link signs that
+browser in for 30 days. Your own machine never needs the code. Anyone with the code can publish to your X account,
+and the traffic is plain HTTP, so only use `--lan` on a network you trust. Each run makes a new code (which signs
+everyone out) unless you set `STUDIO_ACCESS_CODE=...` in `.env`. On macOS, allow Python when the firewall asks.
+
 | Tab | What it does |
 |---|---|
 | **Crawled posts** | Every row of `post.csv`, with filters (topic, min score, search, "no drafts yet"). Select one to see it as an X post, plus the crawler's summary, score and reasons. Draft a **Post** (original post that shares the news and pitches Deviantly), **Quote post** (repost with your commentary), **Reply** (comment under it) or **Repost** (plain repost), with an optional instruction for Gemini. |
@@ -219,8 +230,13 @@ patches around it and sends requests unsigned, but X may reject those. If publis
 
 | File | Purpose |
 |---|---|
-| `studio.py` | Starts the app (local only, `127.0.0.1`) |
-| `workflow/server.py` | API, background crawl and auto-draft jobs |
+| `studio.py` | Starts the app (local only, `127.0.0.1`; `--lan` shares it on your network with an access code) |
+| `config.py` | File paths and every `.env` setting in one place (loads `.env` on import) |
+| `.env.example` | Every supported `.env` key, documented. Copy it to `.env` |
+| `workflow/server.py` | Creates the FastAPI app: middleware, routers, static UI, starts background loops |
+| `workflow/security.py` | Host checks, cross-site protection, LAN access code and `/login` |
+| `workflow/jobs.py` | Background work: crawl, auto-draft, publishing, scheduler, autopilot wiring |
+| `workflow/routes/` | API endpoints, one module per area: `jobs`, `topics`, `drafts`, `settings` |
 | `workflow/drafter.py` | Gemini prompts for choosing a post and writing post / quote / reply; `GEMINI_DRAFT_MODEL` sets the model chain |
 | `workflow/autopilot.py` | The autopilot loop and its guards |
 | `workflow/publisher.py` | Publishing through the X API or twikit |
@@ -229,4 +245,5 @@ patches around it and sends requests unsigned, but X may reject those. If publis
 | `workflow/persona.md` | Persona (voice) Gemini writes in |
 | `workflow/static/` | The UI (plain HTML/CSS/JS) |
 
-Optional `.env` settings: `X_MAX_CHARS` (default 280; raise it for X Premium long posts) and `GEMINI_DRAFT_MODEL`.
+Optional `.env` settings: `X_MAX_CHARS` (default 280; raise it for X Premium long posts), `GEMINI_DRAFT_MODEL` and
+`STUDIO_PORT`. See `.env.example` for all of them.

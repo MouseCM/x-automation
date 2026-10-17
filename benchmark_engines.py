@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from engines import ENGINES, EngineError, available
-from env import load_env_file
+from config import TOPICS_CSV
 from search_crawler import STATUS_RE, Post, enrich_from_embed, reject_reason, score_post, snowflake_time
 from topics import quote_term, select_topics
 
@@ -73,10 +73,9 @@ def run_query(name: str, topic: str, terms: str, args, cutoff: datetime, st: Sta
 
 
 def main() -> None:
-    load_env_file()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--engines", default="", help=f"comma-separated (default: all usable): {','.join(ENGINES)}")
-    p.add_argument("--topics-file", default="topics.csv")
+    p.add_argument("--topics-file", default=TOPICS_CSV)
     p.add_argument("--topics", default="", help="comma-separated topic names (default: all)")
     p.add_argument("--keywords-per-topic", type=int, default=2, help="queries per topic (first N keywords)")
     p.add_argument("--since", type=float, default=24, help="freshness window in hours")

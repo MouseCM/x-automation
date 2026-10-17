@@ -13,8 +13,11 @@ Format (header required, lists are "|"-separated, # starts a comment):
 """
 
 import csv
+import os
 import sys
 from dataclasses import dataclass, field
+
+from config import TOPICS_CSV
 
 
 @dataclass
@@ -38,7 +41,7 @@ def _split(s: str | None) -> list[str]:
     return [p.strip() for p in (s or "").split("|") if p.strip()]
 
 
-def load_topics(path: str = "topics.csv") -> list[Topic]:
+def load_topics(path: str = TOPICS_CSV) -> list[Topic]:
     with open(path, newline="", encoding="utf-8") as f:
         lines = (line for line in f if not line.lstrip().startswith("#"))
         reader = csv.DictReader(lines)
@@ -55,6 +58,22 @@ def load_topics(path: str = "topics.csv") -> list[Topic]:
     if not topics:
         raise ValueError(f"{path} has no topics")
     return topics
+
+
+def save_topics(topics: list[Topic], path: str = TOPICS_CSV) -> None:
+    """Rewrite the topics file atomically, keeping any # comment lines at the top."""
+    comments = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            comments = [line for line in f if line.lstrip().startswith("#")]
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        f.writelines(comments)
+        w = csv.writer(f)
+        w.writerow(["topic", "keywords", "exclude", "require"])
+        for t in topics:
+            w.writerow([t.name, "|".join(t.keywords), "|".join(t.exclude), "|".join(t.require)])
+    os.replace(tmp, path)
 
 
 def select_topics(path: str, names: str | None) -> list[Topic]:

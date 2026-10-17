@@ -15,10 +15,11 @@ keep the volume human, and prefer api mode for plain posts.
 """
 
 import asyncio
-import re
 import os
+import re
 
-SESSION_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".x_session.json")
+from config import X_SESSION_PATH as SESSION_PATH
+from config import env as _env
 
 MODES = ("api", "cookies", "password")
 FIELDS = {
@@ -32,10 +33,6 @@ SECRET = {"X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET", "X_AUTH_TOK
 
 class PublishError(Exception):
     pass
-
-
-def _env(k: str) -> str:
-    return (os.environ.get(k) or "").strip()
 
 
 def configured(mode: str) -> bool:

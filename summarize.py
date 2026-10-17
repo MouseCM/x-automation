@@ -26,8 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from google import genai
 from google.genai import errors, types
 
-# gemini-2.5-flash-lite is cheaper but closed to new API keys, so 3.1 Flash-Lite is the default.
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+from config import POSTS_CSV, gemini_key, summary_model
 
 SYSTEM = (
     "You summarize X (Twitter) posts for a research feed about tech, startups and ecommerce. "
@@ -68,17 +67,18 @@ def simple_summary(text: str, max_chars: int = 160) -> str:
 class Summarizer:
     def __init__(self, mode: str = "auto"):
         self.mode = mode
+        self.model = summary_model()  # GEMINI_MODEL; 3.1 Flash-Lite is the cheapest open to new keys
         self._client = None
         self._lock = threading.Lock()
         if mode not in ("auto", "gemini"):
             return
-        key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        key = gemini_key()
         if not key:
             self._unavailable("GEMINI_API_KEY is not set")
             return
         try:
             self._client = genai.Client(api_key=key)
-            self._client.models.get(model=MODEL)  # free call: verifies the key and model up front
+            self._client.models.get(model=self.model)  # free call: verifies the key and model up front
         except errors.APIError as e:
             self._unavailable(f"{e.code} {e.message}")
         except Exception as e:  # network errors etc.
@@ -87,7 +87,7 @@ class Summarizer:
     @property
     def label(self) -> str:
         if self._client:
-            return f"Gemini ({MODEL})"
+            return f"Gemini ({self.model})"
         return "off" if self.mode == "off" else "simple (extractive)"
 
     def _unavailable(self, why: str) -> None:
@@ -127,7 +127,7 @@ class Summarizer:
 
     def _gemini(self, text: str, topic: str) -> str:
         response = self._client.models.generate_content(
-            model=MODEL,
+            model=self.model,
             contents=f"Topic: {topic}\n\n<post>\n{text}\n</post>",
             config=CONFIG,
         )
@@ -168,12 +168,9 @@ def summarize_csv(path: str, summarize: Summarizer, redo: bool, workers: int) ->
 
 
 def main() -> None:
-    from env import load_env_file
-
-    load_env_file()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--text", help="summarize this one text and print it (quick key test)")
-    p.add_argument("--in", dest="path", default="post.csv", help="CSV to fill in place")
+    p.add_argument("--in", dest="path", default=POSTS_CSV, help="CSV to fill in place")
     p.add_argument("--redo", action="store_true", help="re-summarize rows that already have a summary")
     p.add_argument("--mode", choices=["auto", "gemini", "simple"], default="auto")
     p.add_argument("--workers", type=int, default=4, help="parallel requests (lower if rate-limited)")
