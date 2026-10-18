@@ -1,6 +1,0 @@
-claude mcp add \
-  --scope user \
-  --transport stdio \
-  postgres \
-  --env 'DATABASE_URL=postgresql://db_admin:ChooseSecurePassword123!@144.126.159.197:5433/virlo_metadata?sslmode=require' \
-  -- npx -y @yawlabs/postgres-mcp@latest

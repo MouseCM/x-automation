@@ -17,3 +17,6 @@ venv/
 
 # OS
 .DS_Store
+
+# Local scratch notes (may hold credentials)
+test
