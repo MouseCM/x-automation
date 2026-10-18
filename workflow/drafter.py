@@ -1,4 +1,5 @@
-"""Gemini drafts: turn a crawled X post into a post, quote post or reply that promotes deviantly.ai.
+"""Gemini drafts: turn a crawled X post into a post, quote post or reply that promotes deviantly.ai, or write a
+follow-up comment under one of our own posts.
 
 The brand brief (brand.md) is the only source of facts about Deviantly; the crawled post is the only
 source of facts about the news. The crawled post is untrusted input and is fenced as data.
@@ -81,6 +82,13 @@ KIND_RULES = {
         "value: build on their point, add a specific data point from the brief, or ask a smart follow-up question. "
         "Mention Deviantly only if it truly helps the conversation, in passing, never as a pitch and never with "
         "a link. Under 220 characters. Don't start with @mentions or by complimenting the post."
+    ),
+    "followup": (
+        "Write a FOLLOW-UP COMMENT that goes under OUR OWN post (the post below is ours, already published). "
+        "Readers see it right under the post, so never repeat or summarize it. Continue the thought as the same "
+        "author and add one thing the post left out: a concrete detail or data point from the brand brief, a "
+        "practical next step, deviantly.ai with a one-line reason to look, or a question that invites replies. "
+        "Mention deviantly.ai at most once. Don't start with @mentions, \"Also\" or \"To add\"."
     ),
 }
 
@@ -209,13 +217,19 @@ class Drafter:
             raise RuntimeError("GEMINI_API_KEY is not set (add it to .env)")
 
     def _prompt(self, post: dict, kind: str, instruction: str, previous: str) -> str:
-        parts = [
-            "TASK: " + KIND_RULES[kind].format(username=post.get("username", "author")),
-            f"\nSOURCE POST by @{post.get('username')} ({post.get('display_name')}), topic: {post.get('topic')}, "
-            f"{post.get('likes', 0)} likes, {post.get('replies', 0)} replies.",
-            f"One-line summary: {post.get('summary', '')}",
-            f"<source_post>\n{post.get('text', '')}\n</source_post>",
-        ]
+        parts = ["TASK: " + KIND_RULES[kind].format(username=post.get("username", "author"))]
+        if kind == "followup":
+            parts += [
+                f"\nOUR POST (published from our account), {post.get('likes', 0)} likes, {post.get('replies', 0)} replies.",
+                f"<our_post>\n{post.get('text', '')}\n</our_post>",
+            ]
+        else:
+            parts += [
+                f"\nSOURCE POST by @{post.get('username')} ({post.get('display_name')}), topic: {post.get('topic')}, "
+                f"{post.get('likes', 0)} likes, {post.get('replies', 0)} replies.",
+                f"One-line summary: {post.get('summary', '')}",
+                f"<source_post>\n{post.get('text', '')}\n</source_post>",
+            ]
         if previous:
             parts.append(f"\nPrevious draft (write a clearly different version):\n{previous}")
         if instruction:

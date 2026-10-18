@@ -1,4 +1,5 @@
-"""Crawled posts and their drafts: create, regenerate, edit, approve (publishes to X), schedule, reject."""
+"""Crawled posts and their drafts: create, regenerate, edit, approve (publishes to X), schedule, reject.
+Also follow-up comments under our own posts (/api/followups)."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -10,7 +11,7 @@ from config import max_chars
 from .. import store
 from ..drafter import x_length
 from ..jobs import drafter, publish_claimed
-from ..posts import load_posts, posts_by_id
+from ..posts import OWN_POST_RE, load_posts, own_post, posts_by_id
 
 router = APIRouter(prefix="/api")
 
@@ -38,6 +39,12 @@ def posts():
 class NewDraft(BaseModel):
     post_id: str
     kind: str
+    instruction: str = ""
+
+
+class NewFollowup(BaseModel):
+    draft_id: int | None = None  # a draft the Studio published, or
+    url: str = ""                # a link to any of our posts
     instruction: str = ""
 
 
@@ -70,6 +77,8 @@ def drafts(status: str | None = None, post_id: str | None = None):
 def new_draft(body: NewDraft):
     if body.kind not in store.KINDS:
         raise HTTPException(400, "Pick post, quote, reply or repost")
+    if body.kind == "followup":
+        raise HTTPException(400, "Follow-ups go under your own posts: use Write follow-up on the Published tab")
     post = posts_by_id().get(body.post_id)
     if not post:
         raise HTTPException(404, "That post is no longer in post.csv")
@@ -80,6 +89,29 @@ def new_draft(body: NewDraft):
         raise HTTPException(502, str(e))
     return with_meta(store.create(post, body.kind, out.text, out.angle, out.fit, body.instruction,
                                   writer.model if body.kind != "repost" else ""))
+
+
+@router.post("/followups")
+def new_followup(body: NewFollowup):
+    """Draft a comment to post under one of our own posts. Only on request: nothing writes these automatically."""
+    if body.draft_id is not None:
+        d = _get_draft(body.draft_id)
+        if d["status"] != "posted" or d["kind"] == "repost" or not d.get("published_id"):
+            raise HTTPException(409, "Only posts the Studio published can get a follow-up from here")
+        post = own_post(d["published_id"], text=d["text"], url=d["published_url"])
+    else:
+        m = OWN_POST_RE.search(body.url.strip())
+        if not m:
+            raise HTTPException(400, "Paste the link to one of your posts, like https://x.com/yourname/status/123...")
+        post = own_post(m.group(1))
+    if not post:
+        raise HTTPException(404, "Couldn't load that post from X. Check the link, and that the post is public")
+    writer = drafter()
+    try:
+        out = writer.draft(post, "followup", body.instruction)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    return with_meta(store.create(post, "followup", out.text, out.angle, out.fit, body.instruction, writer.model))
 
 
 @router.post("/drafts/{draft_id}/regenerate")

@@ -143,7 +143,10 @@
 
     <!-- 05 Published -->
     <section id="tab-published" class="tab">
-      <div class="toolbar"><div><h2>Published</h2><p class="muted">Everything the Studio has posted, newest first.</p></div></div>
+      <div class="toolbar">
+        <div><h2>Published</h2><p class="muted">Everything the Studio has posted, newest first. Click <b>Write follow-up</b> on one to add a comment under it.</p></div>
+        <button class="btn" id="followBtn"><iconify-icon icon="solar:chat-round-dots-bold-duotone"></iconify-icon>Follow up on another post</button>
+      </div>
       <div id="publishedList" class="draft-grid stagger"></div>
       <div class="subhead section-head"><h3>Rejected</h3></div>
       <div id="rejectedList" class="draft-grid"></div>
@@ -244,6 +247,21 @@
       <div class="actions">
         <button class="btn ghost" value="cancel">Cancel</button>
         <button class="btn primary" value="ok" id="confirmOk">Post now</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Follow-up comment on your own post -->
+  <dialog id="followDialog">
+    <form method="dialog" class="form">
+      <h2>Write a follow-up comment</h2>
+      <p class="muted">Gemini writes a comment to post under your own post: an extra detail, the link, or a question. It waits in To review until you post it.</p>
+      <div id="fuPost"></div>
+      <label id="fuUrlRow">Link to your post <input type="url" id="fuUrl" placeholder="https://x.com/yourname/status/123..."><small>Any of your public posts, including ones you didn't write in the Studio</small></label>
+      <label>Anything Gemini should keep in mind? <input id="fuInstruction" placeholder="For example: add the deviantly.ai link, or ask people a question"><small>Optional</small></label>
+      <div class="actions">
+        <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="ok"><iconify-icon icon="solar:magic-stick-3-bold-duotone"></iconify-icon>Write it</button>
       </div>
     </form>
   </dialog>

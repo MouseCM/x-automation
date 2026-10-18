@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from config import DB_PATH
 
-KINDS = ("post", "quote", "reply", "repost")
+KINDS = ("post", "quote", "reply", "repost", "followup")
 STATUSES = ("draft", "scheduled", "publishing", "posted", "failed", "rejected")
 
 _lock = threading.Lock()
@@ -21,7 +21,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS drafts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id       TEXT NOT NULL,          -- crawled post this draft is about
-    kind          TEXT NOT NULL,          -- post | quote | reply | repost
+    kind          TEXT NOT NULL,          -- post | quote | reply | repost | followup (comment under our own post)
     text          TEXT NOT NULL DEFAULT '',
     angle         TEXT NOT NULL DEFAULT '', -- Gemini's one-line explanation of the take
     fit           INTEGER,                -- Gemini's 0-10 rating of how well the post fits Deviantly

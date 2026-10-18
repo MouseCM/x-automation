@@ -97,7 +97,7 @@ def _api_publish(kind: str, text: str, source_id: str) -> str | None:
             c.retweet(source_id)
             return None
         kwargs = {"text": text}
-        if kind == "reply":
+        if kind in ("reply", "followup"):  # a follow-up is a reply under our own post
             kwargs["in_reply_to_tweet_id"] = source_id
         elif kind == "quote":
             kwargs["quote_tweet_id"] = source_id
@@ -217,7 +217,7 @@ async def _twikit_publish(mode: str, kind: str, text: str, source_id: str, sourc
         return None
     response, _ = await client.gql.create_tweet(
         False, text, [], None,                            # is_note_tweet, text, media, poll
-        source_id if kind == "reply" else None,           # reply_to
+        source_id if kind in ("reply", "followup") else None,  # reply_to
         source_url if kind == "quote" else None,          # attachment_url (makes it a quote post)
         None, False, None, None, None,                    # community, share_with_followers, richtext, edit, limit_mode
     )

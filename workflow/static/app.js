@@ -31,6 +31,8 @@ const KINDS = {
   quote: { label: "Quote", hint: "Repost it with your take on top", action: "Post now", noun: "quote post", icon: "chat-square-like-bold-duotone" },
   reply: { label: "Reply", hint: "Comment under their post", action: "Reply now", noun: "reply", icon: "chat-round-line-bold-duotone" },
   repost: { label: "Repost", hint: "Share it as it is", action: "Repost now", noun: "repost", icon: "repeat-bold-duotone" },
+  // Only for your own posts, written when you ask for one (Published tab), never for crawled posts.
+  followup: { label: "Follow-up", hint: "Comment under your own post", action: "Comment now", noun: "follow-up comment", icon: "chat-round-dots-bold-duotone", own: true },
 };
 
 const STATUS_LABEL = {
@@ -302,7 +304,7 @@ function renderPostDetail() {
     <div class="card panel" id="postMeta"></div>
     <div class="card panel">
       <h3><span class="num">B</span>Respond to this post</h3>
-      <div class="kinds">${Object.entries(KINDS).map(([k, v]) => `<button class="kind-btn ${state.kind === k ? "active" : ""}" data-kind="${k}">${I(v.icon)}<div><b>${v.label}</b><span>${v.hint}</span></div></button>`).join("")}</div>
+      <div class="kinds">${Object.entries(KINDS).filter(([, v]) => !v.own).map(([k, v]) => `<button class="kind-btn ${state.kind === k ? "active" : ""}" data-kind="${k}">${I(v.icon)}<div><b>${v.label}</b><span>${v.hint}</span></div></button>`).join("")}</div>
       <div class="gen-row">
         ${state.kind === "repost" ? "" : `<input id="genInstruction" placeholder="Anything Gemini should keep in mind? For example: mention the free trial">`}
         <button class="btn primary" id="genBtn">${I(state.kind === "repost" ? "repeat-bold-duotone" : "magic-stick-3-bold-duotone")}${state.kind === "repost" ? "Add repost to review" : "Write a draft"}</button>
@@ -373,8 +375,18 @@ function previewBody(d) {
       <div class="tweet">${ourAvatar()}<div><div class="who">${ourName()}</div><div class="replying">Replying to <a href="${esc(src.url)}" target="_blank" rel="noopener">@${esc(src.username)}</a></div>${textArea}</div></div>
     </div>`;
   }
+  if (d.kind === "followup") {
+    return `<div class="thread">
+      <div class="tweet">${ourAvatar()}<div><div class="who">${ourName()}</div>
+        <div class="body dim">${esc(src.text.slice(0, 220))}${src.text.length > 220 ? "..." : ""}</div></div></div>
+      <div class="tweet">${ourAvatar()}<div><div class="who">${ourName()}</div><div class="replying">Under <a href="${esc(src.url)}" target="_blank" rel="noopener">your post</a></div>${textArea}</div></div>
+    </div>`;
+  }
   return `<div class="tweet">${ourAvatar()}<div><div class="who">${ourName()}</div>${textArea}${d.kind === "quote" ? quotedCard(src) : ""}</div></div>`;
 }
+
+// A follow-up whose post belongs to a different account than the one connected (e.g. a pasted link).
+const notOurs = (d) => d.kind === "followup" && d.source.username && state.me && d.source.username.toLowerCase() !== state.me.toLowerCase();
 
 function counter(d) {
   if (d.kind === "repost") return "";
@@ -388,7 +400,7 @@ function counter(d) {
 
 function draftCard(d) {
   const k = KINDS[d.kind] || { label: d.kind, action: "Post now" };
-  const fit = d.kind !== "repost" && d.fit != null ? `<span class="fit ${fitCls(d.fit)}" title="How naturally this post connects to Deviantly, according to Gemini">Fit ${d.fit}/10</span>` : "";
+  const fit = d.kind !== "repost" && d.kind !== "followup" && d.fit != null ? `<span class="fit ${fitCls(d.fit)}" title="How naturally this post connects to Deviantly, according to Gemini">Fit ${d.fit}/10</span>` : "";
   const rewrite = d.kind !== "repost" && d.status !== "scheduled"
     ? `<div class="rewrite"><input placeholder="Ask for changes, e.g. shorter, more playful" data-instr="${d.id}"><button class="btn small" data-act="regen">${I("magic-stick-3-bold-duotone")}Rewrite</button></div>` : "";
   let actions = "";
@@ -405,7 +417,7 @@ function draftCard(d) {
       <button class="btn small" data-act="schedule">${I("clock-circle-bold-duotone")}Change time</button>
       <button class="btn small primary" data-act="now">${I("plain-bold-duotone")}${k.action}</button>`;
   } else if (d.status === "posted") {
-    actions = `<span class="muted">Posted ${ago(d.updated_at)}</span><span class="spacer"></span><a class="btn small" href="${esc(d.published_url)}" target="_blank" rel="noopener">View on X ${I("arrow-right-up-linear")}</a>`;
+    actions = `<span class="muted">Posted ${ago(d.updated_at)}</span><span class="spacer"></span>${d.kind !== "repost" && d.published_id ? `<button class="btn small" data-act="followup">${I(KINDS.followup.icon)}Write follow-up</button>` : ""}<a class="btn small" href="${esc(d.published_url)}" target="_blank" rel="noopener">View on X ${I("arrow-right-up-linear")}</a>`;
   } else if (d.status === "rejected") {
     actions = `<span class="spacer"></span><button class="btn small ghost danger" data-act="delete">Delete</button><button class="btn small" data-act="restore">${I("undo-left-round-bold-duotone")}Move back to review</button>`;
   } else if (d.status === "publishing") {
@@ -419,6 +431,7 @@ function draftCard(d) {
     ${sched}
     ${previewBody(d)}
     ${d.angle && d.kind !== "repost" ? `<div class="angle"><b>The idea:</b> ${esc(d.angle)}</div>` : ""}
+    ${notOurs(d) ? `<div class="callout warn">${I("danger-triangle-bold-duotone")}<span>This post is from @${esc(d.source.username)}, not your connected account ${esc(handle())}.</span></div>` : ""}
     ${d.error ? `<div class="callout bad err">${I("danger-triangle-bold-duotone")}<span>${esc(d.error)}</span></div>` : ""}
     ${rewrite}
     <div class="draft-actions">${actions}</div>
@@ -449,6 +462,7 @@ async function draftAction(btn) {
   const d = state.drafts.find((x) => x.id === id);
   const text = $("textarea[data-edit]", card)?.value ?? d.text;
   let at = null;
+  if (act === "followup") return openFollowup(d);
   if (act === "approve" || act === "now") { if (!(await confirmPublish(d, text))) return; }
   if (act === "schedule") { at = await pickTime(d); if (!at) return; }
   if (act === "delete" && !confirm("Delete this draft for good?")) return;
@@ -481,8 +495,8 @@ async function draftAction(btn) {
 }
 
 function confirmPublish(d, text) {
-  const what = { post: "this post", quote: "this quote post", reply: `this reply to @${esc(d.source.username)}`, repost: `@${esc(d.source.username)}'s post` }[d.kind];
-  $("#confirmTitle").textContent = d.kind === "repost" ? "Repost this now?" : d.kind === "reply" ? "Send this reply now?" : "Post this now?";
+  const what = { post: "this post", quote: "this quote post", reply: `this reply to @${esc(d.source.username)}`, repost: `@${esc(d.source.username)}'s post`, followup: "this comment under your post" }[d.kind];
+  $("#confirmTitle").textContent = d.kind === "repost" ? "Repost this now?" : d.kind === "reply" ? "Send this reply now?" : d.kind === "followup" ? "Post this comment now?" : "Post this now?";
   $("#confirmOk").textContent = KINDS[d.kind].action;
   $("#confirmBody").innerHTML = `<p>${d.kind === "repost" ? "You'll repost" : "You'll publish"} ${what} from <b>${esc(handle())}</b> right away.</p>` +
     (d.kind !== "repost" ? `<div class="card quote-preview">${esc(text)}</div>` : "") +
@@ -520,6 +534,7 @@ function pickTime(d) {
   $("#scheduleTitle").textContent = d.status === "scheduled" ? "Pick a new time" : `Schedule this ${k.noun}`;
   $("#scheduleNote").textContent = d.kind === "reply"
     ? `The reply goes under @${d.source.username}'s post at the time you pick.`
+    : d.kind === "followup" ? "The comment goes under your post at the time you pick, as long as the Studio is running."
     : "It goes out at the time you pick, as long as the Studio is running.";
   const input = $("#scheduleAt");
   const start = d.scheduled_at ? new Date(d.scheduled_at) : quickTimes()[0][1];
@@ -564,6 +579,35 @@ $("#autoForm").addEventListener("submit", async (e) => {
     await refreshStatus();
   });
 });
+
+// ------------------------------------------------------------------ follow-ups on your own posts
+
+// Opens the follow-up dialog for a published draft, or (with no draft) for a pasted link to any of your posts.
+async function openFollowup(d = null) {
+  $("#fuUrlRow").hidden = !!d;
+  $("#fuUrl").required = !d;
+  $("#fuUrl").value = "";
+  $("#fuInstruction").value = "";
+  $("#fuPost").innerHTML = d ? `<div class="card quote-preview">${esc(d.text)}</div>` : "";
+  if (!(await dialogResult($("#followDialog")))) return;
+  const url = $("#fuUrl").value.trim();
+  const who = url.match(/(?:x|twitter)\.com\/(\w{1,15})\/status/)?.[1];
+  if (!d && who && state.me && who.toLowerCase() !== state.me.toLowerCase() &&
+      !confirm(`This post is from @${who}, not your connected account @${state.me}. Write a follow-up for it anyway?`)) return;
+  showTab("review");
+  history.replaceState(null, "", "#review");
+  $("#reviewList").insertAdjacentHTML("afterbegin", skeletonCard("Gemini is writing your follow-up comment"));
+  let draft;
+  try {
+    draft = await api("/api/followups", { method: "POST", body: { draft_id: d?.id ?? null, url, instruction: $("#fuInstruction").value } });
+  } catch (e) { toast(e.message, true); } finally { $("#reviewList .skel-card")?.remove(); }
+  if (!draft) return;
+  toast("Your follow-up comment is ready to review.");
+  await loadDrafts();
+  refreshStatus();
+  document.querySelector(`#reviewList [data-draft="${draft.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+$("#followBtn").onclick = () => openFollowup();
 
 // ------------------------------------------------------------------ autopilot
 
